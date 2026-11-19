@@ -3,6 +3,41 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
+macro_rules! nfa {
+    ($($($state:expr),*)=>*) => {{
+        // start nfa with initial epsion state
+
+        let mut states = vec![];
+        $(
+            // for each => create and epsilon glue
+            let epsilon_index = states.len() as u64;
+            let mut next_state_raw_ptrs = vec![];
+
+            $(
+                states.push((states.len() as u64 + 1, State::new(Some($state), vec![0], false)));
+                let len = states.len() - 1;
+                next_state_raw_ptrs.push(&raw mut states[len].1.next_states[0]);
+            )*
+
+            states.push((epsilon_index, State::new(None, ((epsilon_index + 1)..=states.len() as u64).into_iter().collect(), false)));
+
+            for raw_ptr in next_state_raw_ptrs.into_iter() {
+                unsafe { *raw_ptr = states.len() as u64 };
+            }
+
+            if epsilon_index != 0 {
+                states.push((states.len() as u64, State::new(None, vec![(states.len() + 1) as u64, epsilon_index], false)));
+            } else {
+                states.push((states.len() as u64, State::new(None, vec![(states.len() + 1) as u64], false)));
+            }
+        )*
+
+        states.push((states.len() as u64, State::new(None, vec![], true)));
+
+        NFA::new(states.into_iter().collect())
+    }};
+}
+
 #[derive(Debug)]
 struct State<T: PartialEq<D> + Debug, D: Debug> {
     alphabet: Option<T>,
@@ -39,6 +74,7 @@ impl<T: PartialEq<D> + Debug, D: Debug> State<T, D> {
     }
 }
 
+#[derive(Debug)]
 struct NFA<T: PartialEq<D> + Debug, D: Debug> {
     states: BTreeMap<u64, State<T, D>>,
 }
@@ -58,15 +94,13 @@ impl<T: PartialEq<D> + Debug, D: Debug> NFA<T, D> {
                             return Some(state);
                         }
                     } else {
-                        if let Some(state) = self.trans(state, input) {
-                            return Some(state);
-                        } else {
-                            if state.accepting && states.is_empty() {
-                                return Some(state);
-                            }
-                        }
+                        states.extend(self.eclosure(state));
                     }
                 }
+            }
+
+            if state.accepting && states.is_empty() {
+                return Some(state);
             }
         }
 
@@ -99,25 +133,10 @@ impl<T: PartialEq<D> + Debug, D: Debug> NFA<T, D> {
     }
 }
 
-//"letter (letter|digit)*"
-// letter -> while (char == letter | digit | space) { consume alphabet } else { break }
-//nfa!(Regex::Letter => Regex::Letter | Regex::Digit | Regiex::Char(' '));
 fn main() {
-    let string = String::from("small and weak little hik\n");
-    let states: BTreeMap<u64, State<_, char>> = vec![
-        (0, State::new(None, vec![1], false)),
-        (1, State::new(Some(Regex::Letter), vec![2], false)),
-        (2, State::new(None, vec![3, 4, 5, 7], false)),
-        (3, State::new(Some(Regex::Letter), vec![6], false)),
-        (4, State::new(Some(Regex::Digit), vec![6], false)),
-        (5, State::new(Some(Regex::Char(' ')), vec![6], false)),
-        (6, State::new(None, vec![2, 7], false)),
-        (7, State::new(None, vec![], true)),
-    ]
-    .into_iter()
-    .collect();
+    let string = String::from("small weak and petite hikki");
 
-    let nfa: NFA<_, char> = NFA::new(states);
+    let nfa: NFA<_, char> = nfa!(Regex::Letter => Regex::Letter , Regex::Digit , Regex::Char(' '));
 
     let mut states = vec![nfa.start_state()];
 
