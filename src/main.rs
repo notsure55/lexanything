@@ -14,21 +14,21 @@ macro_rules! nfa {
             let mut next_state_raw_ptrs = vec![];
 
             $(
-                states.push((states.len() as u64 + 1, State::new(Some($state), vec![0], false)));
-                let len = states.len() - 1;
-                next_state_raw_ptrs.push(&raw mut states[len].1.next_states[0]);
+                if $state.rep == RegexRepetiton::ZeroOrMore {
+                    states.push((states.len() as u64 + 1, State::new(Some($state), vec![0, epsilon_index], false)));
+                    let len = states.len() - 1;
+                    next_state_raw_ptrs.push(&raw mut states[len].1.next_states[0]);
+                } else {
+                    states.push((states.len() as u64 + 1, State::new(Some($state), vec![0], false)));
+                    let len = states.len() - 1;
+                    next_state_raw_ptrs.push(&raw mut states[len].1.next_states[0]);
+                }
             )*
 
             states.push((epsilon_index, State::new(None, ((epsilon_index + 1)..=states.len() as u64).into_iter().collect(), false)));
 
             for raw_ptr in next_state_raw_ptrs.into_iter() {
                 unsafe { *raw_ptr = states.len() as u64 };
-            }
-
-            if epsilon_index != 0 {
-                states.push((states.len() as u64, State::new(None, vec![(states.len() + 1) as u64, epsilon_index], false)));
-            } else {
-                states.push((states.len() as u64, State::new(None, vec![(states.len() + 1) as u64], false)));
             }
         )*
 
@@ -47,18 +47,52 @@ struct State<T: PartialEq<D> + Debug, D: Debug> {
 }
 
 #[derive(PartialEq, Debug)]
-enum Regex {
+enum RegexType {
     Letter,
     Digit,
     Char(char),
 }
 
+impl From<char> for RegexType {
+    fn from(val: char) -> Self {
+        RegexType::Char(val)
+    }
+}
+
+#[derive(Debug)]
+struct Regex {
+    ty: RegexType,
+    rep: RegexRepetiton,
+}
+
+impl Regex {
+    pub fn new(t: impl Into<RegexType>, r: impl Into<RegexRepetiton>) -> Self {
+        Self {
+            ty: t.into(),
+            rep: r.into(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum RegexRepetiton {
+    Repeat(u64),
+    ZeroOrMore,
+    OneOrMore,
+}
+
+impl From<u64> for RegexRepetiton {
+    fn from(val: u64) -> Self {
+        Self::Repeat(val)
+    }
+}
+
 impl PartialEq<char> for Regex {
     fn eq(&self, other: &char) -> bool {
-        match self {
-            Self::Letter => other.is_ascii_alphabetic(),
-            Self::Digit => other.is_ascii_digit(),
-            Self::Char(c) => c == other,
+        match self.ty {
+            RegexType::Letter => other.is_ascii_alphabetic(),
+            RegexType::Digit => other.is_ascii_digit(),
+            RegexType::Char(ref c) => c == other,
         }
     }
 }
@@ -69,7 +103,7 @@ impl<T: PartialEq<D> + Debug, D: Debug> State<T, D> {
             alphabet,
             next_states,
             accepting,
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         }
     }
 }
@@ -99,6 +133,7 @@ impl<T: PartialEq<D> + Debug, D: Debug> NFA<T, D> {
                 }
             }
 
+            // if we have reached the conclusion of our program
             if state.accepting && states.is_empty() {
                 return Some(state);
             }
@@ -106,9 +141,9 @@ impl<T: PartialEq<D> + Debug, D: Debug> NFA<T, D> {
 
         None
     }
-    pub fn eclosure(&self, state: &State<T, D>) -> Vec<&State<T, D>> {
+    pub fn eclosure<'a>(&'a self, state: &'a State<T, D>) -> Vec<&'a State<T, D>> {
         let mut e_states = vec![state];
-        let mut ret_states = vec![];
+        let mut ret_states = vec![state];
 
         while let Some(e_state) = e_states.pop() {
             for s in e_state.next_states.iter() {
@@ -134,9 +169,18 @@ impl<T: PartialEq<D> + Debug, D: Debug> NFA<T, D> {
 }
 
 fn main() {
-    let string = String::from("small weak and petite hikki");
+    let string = String::from("hes_weak_and_worthless\n");
 
-    let nfa: NFA<_, char> = nfa!(Regex::Letter => Regex::Letter , Regex::Digit , Regex::Char(' '));
+    let nfa_float: NFA<_, char> = nfa!(
+        Regex::new(RegexType::Digit, RegexRepetiton::ZeroOrMore)
+        => Regex::new('.', 1)
+        => Regex::new(RegexType::Digit, RegexRepetiton::ZeroOrMore)
+    );
+
+    let nfa: NFA<_, char> = nfa!(
+        Regex::new(RegexType::Letter, RegexRepetiton::ZeroOrMore)
+        => Regex::new(RegexType::Digit, RegexRepetiton::ZeroOrMore), Regex::new(RegexType::Letter, RegexRepetiton::ZeroOrMore), Regex::new('_', RegexRepetiton::ZeroOrMore)
+    );
 
     let mut states = vec![nfa.start_state()];
 
